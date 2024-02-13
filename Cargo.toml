@@ -1,0 +1,8 @@
+workspace = { members = ["suffix_array"] }
+[package]
+name = "suffix"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+suffix_array = { path = "suffix_array" }
