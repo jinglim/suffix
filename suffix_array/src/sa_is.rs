@@ -19,9 +19,6 @@ enum LSType {
 }
 use LSType::*;
 
-// Represents a null value as usize type.
-const NULL: TextSize = TextSize::MAX;
-
 // Represents a sequence of text characters.
 trait Text: std::fmt::Display {
     // Length of the text.
@@ -526,8 +523,11 @@ impl<'a> RecursiveBuilder<'a> {
         // Number of LMS suffixes.
         let mut num_lms = 0;
 
+        const NULL_NAME: u32 = u32::MAX;
+        const NULL_POS: TextSize = TextSize::MAX;
+
         // Maps each LMS position to its new name.
-        let mut pos_name_map: Vec<u32> = vec![0; self.text.len() as usize];
+        let mut pos_name_map: Vec<u32> = vec![NULL_NAME; self.text.len() as usize];
 
         // Stores LMS offsets in ascending order.
         let mut sorted_unique_pos: Vec<TextSize> =
@@ -537,7 +537,7 @@ impl<'a> RecursiveBuilder<'a> {
         for &b in suffix_data.bucket_indexes.iter() {
             let bucket = &buckets[b];
 
-            let mut last_lms_pos = NULL;
+            let mut last_lms_pos = NULL_POS;
 
             // Iterate through the tails of each bucket, that's where the LMS suffixes are.
             for i in bucket.end - bucket_tails[b]..bucket.end {
@@ -546,7 +546,7 @@ impl<'a> RecursiveBuilder<'a> {
                 if pos > 0 && ls_type[(pos - 1) as usize] == LType {
                     debug_assert!(ls_type[pos as usize] == SType);
 
-                    if last_lms_pos != NULL
+                    if last_lms_pos != NULL_POS
                         && self.text.lms_strings_equal(last_lms_pos, pos, ls_type)
                     {
                         // The LMS substring is the same as previous.
@@ -572,9 +572,12 @@ impl<'a> RecursiveBuilder<'a> {
             let mut new_text: Vec<u32> = Vec::with_capacity(num_lms);
             let mut pos_translation: Vec<TextSize> = Vec::with_capacity(num_lms);
 
-            for pos in LmsIterator::new(&suffix_data.ls_type) {
-                new_text.push(pos_name_map[pos as usize]);
-                pos_translation.push(pos);
+            for i in 0..self.text.len() {
+                let name = pos_name_map[i as usize];
+                if name != NULL_NAME {
+                    new_text.push(name);
+                    pos_translation.push(i);
+                }
             }
 
             ReducedText::Reduced {

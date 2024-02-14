@@ -63,8 +63,11 @@ mod tests {
                     test_bytes[j] = ((next_random(&mut rand) % 16) + ('a' as usize)) as u8;
                 }
             }
-            println!("Test string: {}", String::from_utf8_lossy(&test_bytes).to_string());
-    
+            println!(
+                "Test string: {}",
+                String::from_utf8_lossy(&test_bytes).to_string()
+            );
+
             let suffix_array = sa_builder.build(&test_bytes);
             let sa_naive = testing::naive_suffix_array(&test_bytes);
             assert!(testing::compare_suffix_arrays(
