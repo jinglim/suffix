@@ -43,13 +43,14 @@ trait Text: std::fmt::Display {
             }
             let a_type = ls_type[a as usize];
             if a_type == LType {
-                if ls_type[b as usize] != LType {
-                    return false;
-                }
                 break;
             }
             a += 1;
             b += 1;
+        }
+
+        if ls_type[b as usize] != LType {
+            return false;
         }
 
         // Loop until char mismatch or a SType is encountered.
@@ -202,38 +203,45 @@ struct RecursiveBuilder<'a> {
 
     // This is 256 in the initial build, but may increase subsequently.
     // Assuming that subsequent alphabet will be less than 2^32.
-    alphabet_size: u32,
+    alphabet_size: TextSize,
 }
 
 // Result of reducing the original text to a new shorter text.
 enum ReducedText {
     // Already sorted, don't need to recurse.
     Sorted {
-        sorted_pos: Vec<TextSize>,
+        num_lms: TextSize,
     },
     // Reduced to the given text and alphabet size.
     Reduced {
-        text: Vec<u32>,
-        alphabet_size: u32,
-
-        // Translates the new text position to the original text position.
-        pos_translation: Vec<TextSize>,
+        reduced_text: Vec<u32>,
+        alphabet_size: TextSize,
     },
+}
+
+// A parameter for induced sorting, describing how to start the induced sorting.
+enum InduceSortLmsStrings {
+    // Start sorting with LMS positions provided by the LmsIterator.
+    LmsIterator,
+
+    // Start sorting with the already sorted suffix positions at sa[0..num_lms-1].
+    Sorted { num_lms: TextSize },
 }
 
 // The SA-IS algorithm is recursive. This builder calls itself recursively to build
 // subsequent smaller Text inputs.
 impl<'a> RecursiveBuilder<'a> {
     // Creates a new instance.
-    fn new(text: &'a dyn Text, alphabet_size: u32) -> RecursiveBuilder<'a> {
+    fn new(text: &'a dyn Text, alphabet_size: TextSize) -> RecursiveBuilder<'a> {
         RecursiveBuilder {
             text,
             alphabet_size,
         }
     }
 
-    // Builds a suffix array and returns it.
-    fn build(&mut self) -> Vec<TextSize> {
+    // Builds the suffix array.
+    // Return the sorted suffix positions in sa[0..text.len-1].
+    fn build(&mut self, sa: &'a mut [TextSize]) {
         if DEBUG_LEVEL >= 1 {
             println!(
                 "  BUILD text:{} alphabet:{}",
@@ -245,53 +253,59 @@ impl<'a> RecursiveBuilder<'a> {
         // First, scan the text and build the data structures used for later computation.
         let suffix_data = self.build_suffix_data();
 
-        // Run the induced sort, followed by a reduction step.
+        // Run an induced sort on the LMS substrings, followed by a reduce step.
         let reduced_data = {
-            let mut sa: Vec<TextSize> = vec![0; self.text.len() as usize];
-
             // Induced sort on the LMS substrings.
-            let bucket_tails = self.induced_sort(
-                &suffix_data,
-                &mut sa,
-                &mut LmsIterator::new(&suffix_data.ls_type),
-            );
+            let bucket_tails =
+                self.induced_sort(&suffix_data, sa, InduceSortLmsStrings::LmsIterator);
 
             // Reduce into smaller text, for recursion.
-            self.reduce(&suffix_data, &sa, &bucket_tails)
+            self.reduce(&suffix_data, sa, &bucket_tails)
         };
 
-        // Sort all the suffixes starting from LMS positions.
-        let sorted_lms: Vec<TextSize> = {
-            match reduced_data {
-                ReducedText::Sorted { sorted_pos } => sorted_pos,
-                ReducedText::Reduced {
-                    text,
-                    alphabet_size,
-                    pos_translation,
-                } => {
-                    // Expect the reduced text is at most half the original length.
-                    debug_assert!(text.len() <= (self.text.len() / 2) as usize);
+        // Sort the rest (non LMS) of the suffixes.
+        match reduced_data {
+            ReducedText::Sorted { num_lms } => {
+                // Run another induced sort to sort the rest of the suffixes.
+                self.induced_sort(&suffix_data, sa, InduceSortLmsStrings::Sorted { num_lms });
+            }
+            ReducedText::Reduced {
+                reduced_text,
+                alphabet_size,
+            } => {
+                // Expect the reduced text is at most half the original length.
+                let num_lms = reduced_text.len() as TextSize;
 
-                    // Recurse on the new text.
-                    let u32_text: U32Text = U32Text { text: &text };
-                    let mut new_sa_builder = RecursiveBuilder::new(&u32_text, alphabet_size);
-                    let new_sa = new_sa_builder.build();
+                // Recurse on the new text.
+                let new_text: U32Text = U32Text {
+                    text: &reduced_text,
+                };
+                let mut new_sa_builder = RecursiveBuilder::new(&new_text, alphabet_size);
+                new_sa_builder.build(sa);
 
-                    // Convert the pos of the suffix array of the reduced text to the pos in
-                    // the original text.
-                    let mut sorted_lms = Vec::with_capacity(text.len());
-                    for &pos in new_sa.iter() {
-                        sorted_lms.push(pos_translation[pos as usize]);
+                // Now, we have sa[0..num_lms] = sorted offsets that are relative to the reduced
+                // text. Next, convert these pos to the pos relative to the original text.
+                let ls_type = &suffix_data.ls_type;
+                for i in 0..num_lms {
+                    // In the reduce step, we kept a mapping from the reduced text pos to the
+                    // original text pos:
+                    // sa[num_lms + reduced_text_pos] = original_text_pos/2.
+                    let mut pos = sa[(num_lms + sa[i as usize]) as usize] * 2;
+
+                    // This is to determine if the original pos is (pos) or (pos + 1), by checking
+                    // which is a LMS position.
+                    if ls_type[pos as usize] != SType {
+                        pos += 1;
                     }
-                    sorted_lms
+
+                    // Set sa[i] to the original text pos.
+                    sa[i as usize] = pos;
                 }
+
+                // Run another induced sort to sort the rest of the suffixes.
+                self.induced_sort(&suffix_data, sa, InduceSortLmsStrings::Sorted { num_lms });
             }
         };
-
-        // Run another induced sort to sort the rest of the suffixes.
-        let mut sa: Vec<TextSize> = vec![0; self.text.len() as usize];
-        self.induced_sort(&suffix_data, &mut sa, &mut sorted_lms.iter().rev().copied());
-        sa
     }
 
     // Print debugging info.
@@ -393,7 +407,7 @@ impl<'a> RecursiveBuilder<'a> {
         &self,
         suffix_data: &SuffixData,
         sa: &mut [TextSize],
-        stype_iter: &'a mut dyn std::iter::Iterator<Item = TextSize>,
+        lms_strings: InduceSortLmsStrings,
     ) -> Vec<TextSize> {
         // Assign a rank for prev_pos at the next available head pos of the
         // bucket. LTypes are always placed at the head part of the bucket.
@@ -433,6 +447,20 @@ impl<'a> RecursiveBuilder<'a> {
         let mut bucket_heads: Vec<TextSize> = vec![0; self.alphabet_size as usize];
         let mut bucket_tails: Vec<TextSize> = vec![0; self.alphabet_size as usize];
 
+        // Fill each LMS position at the tail of its bucket based on its first char.
+        match lms_strings {
+            InduceSortLmsStrings::LmsIterator => {
+                for pos in LmsIterator::new(ls_type) {
+                    assign_stype(self.text, pos, buckets, &mut bucket_tails, sa);
+                }
+            }
+            InduceSortLmsStrings::Sorted { num_lms } => {
+                for pos in (0..num_lms).rev() {
+                    assign_stype(self.text, sa[pos as usize], buckets, &mut bucket_tails, sa);
+                }
+            }
+        }
+
         // Assign the last char, which is always a LType that is smallest in its bucket.
         assign_ltype(
             self.text,
@@ -441,11 +469,6 @@ impl<'a> RecursiveBuilder<'a> {
             &mut bucket_heads,
             sa,
         );
-
-        // Fill each LMS position at the tail of its bucket based on its first char.
-        for pos in stype_iter {
-            assign_stype(self.text, pos, buckets, &mut bucket_tails, sa);
-        }
 
         // Traverse the buckets from left (lowest) to right (highest) and place LTypes at the head
         // of the buckets.
@@ -514,76 +537,97 @@ impl<'a> RecursiveBuilder<'a> {
     fn reduce(
         &self,
         suffix_data: &SuffixData,
-        sa: &[TextSize],
+        sa: &mut [TextSize],
         bucket_tails: &[TextSize],
     ) -> ReducedText {
         let ls_type = &suffix_data.ls_type;
         let buckets = &suffix_data.buckets;
 
         // Number of LMS suffixes.
-        let mut num_lms = 0;
+        let mut num_lms: TextSize = 0;
 
-        const NULL_NAME: u32 = u32::MAX;
-        const NULL_POS: TextSize = TextSize::MAX;
-
-        // Maps each LMS position to its new name.
-        let mut pos_name_map: Vec<u32> = vec![NULL_NAME; self.text.len() as usize];
-
-        // Stores LMS offsets in ascending order.
-        let mut sorted_unique_pos: Vec<TextSize> =
-            Vec::with_capacity((self.text.len() as usize) / 4); // Estimate.
-
-        // Iterate through the bucekts.
+        // Move all the LMS pos to the beginning of sa.
         for &b in suffix_data.bucket_indexes.iter() {
             let bucket = &buckets[b];
-
-            let mut last_lms_pos = NULL_POS;
 
             // Iterate through the tails of each bucket, that's where the LMS suffixes are.
             for i in bucket.end - bucket_tails[b]..bucket.end {
                 // Check if pos is a LMS.
                 let pos = sa[i as usize];
                 if pos > 0 && ls_type[(pos - 1) as usize] == LType {
-                    debug_assert!(ls_type[pos as usize] == SType);
-
-                    if last_lms_pos != NULL_POS
-                        && self.text.lms_strings_equal(last_lms_pos, pos, ls_type)
-                    {
-                        // The LMS substring is the same as previous.
-                        pos_name_map[pos as usize] = (sorted_unique_pos.len() - 1) as u32;
-                    } else {
-                        // The LMS substring is a new unique substring.
-                        pos_name_map[pos as usize] = sorted_unique_pos.len() as u32;
-                        sorted_unique_pos.push(pos);
-                        last_lms_pos = pos;
-                    }
+                    sa[num_lms as usize] = pos;
                     num_lms += 1;
                 }
             }
         }
+        let text_len = self.text.len();
+        assert!(num_lms <= text_len / 2);
 
-        if sorted_unique_pos.len() == num_lms {
-            ReducedText::Sorted {
-                sorted_pos: sorted_unique_pos,
-            }
+        if num_lms < 2 {
+            return ReducedText::Sorted { num_lms: num_lms };
+        }
+
+        // Clear out the text_len/2 slots from sa[num_lms..].
+        // This will be used for bucket sorting the LMS positions.
+        const NULL_NAME: u32 = u32::MAX;
+        for i in num_lms as usize..(num_lms + text_len / 2) as usize {
+            sa[i] = NULL_NAME;
+        }
+
+        // Iterate through the sorted LMS strings to assign a name for each unique string.
+        let mut last_lms_pos = sa[0];
+        sa[(num_lms + last_lms_pos / 2) as usize] = 0;
+        let mut name_counter: TextSize = 0;
+
+        for i in 1..num_lms {
+            let pos = sa[i as usize];
+
+            let name = if self.text.lms_strings_equal(last_lms_pos, pos, ls_type) {
+                name_counter
+            } else {
+                last_lms_pos = pos;
+                name_counter += 1;
+                name_counter
+            };
+
+            // Store the name at a bucket indexed by pos/2, so that we will have the names
+            // ordered by the pos.
+            // LMS strings are at least 2 chars apart, so pos/2 is unique for each LMS pos.
+            sa[(num_lms + pos / 2) as usize] = name;
+        }
+        name_counter += 1;
+
+        // This implementation assumes this.
+        assert!(name_counter <= u32::MAX as TextSize);
+
+        if name_counter == num_lms {
+            ReducedText::Sorted { num_lms: num_lms }
         } else {
             // Scan LMS positions and construct the new text by mapping each LMS substring to the
             // its new alphabet.
-            let mut new_text: Vec<u32> = Vec::with_capacity(num_lms);
-            let mut pos_translation: Vec<TextSize> = Vec::with_capacity(num_lms);
-
-            for i in 0..self.text.len() {
-                let name = pos_name_map[i as usize];
+            let mut reduced_text: Vec<u32> = Vec::with_capacity(num_lms as usize);
+            let mut i = num_lms;
+            let mut j = 0;
+            loop {
+                let name = sa[i as usize];
                 if name != NULL_NAME {
-                    new_text.push(name);
-                    pos_translation.push(i);
+                    reduced_text.push(name);
+
+                    // Keep a record of the mapping from reduced text pos to the original text pos.
+                    // This will be used later.
+                    sa[(j + num_lms) as usize] = i - num_lms;
+
+                    j += 1;
+                    if j == num_lms {
+                        break;
+                    }
                 }
+                i += 1;
             }
 
             ReducedText::Reduced {
-                text: new_text,
-                alphabet_size: sorted_unique_pos.len() as u32,
-                pos_translation,
+                reduced_text: reduced_text,
+                alphabet_size: name_counter,
             }
         }
     }
@@ -614,11 +658,12 @@ impl SuffixArrayBuilder for SaIsBuilder {
         assert!(text.len() < (TextSize::MAX - 1) as usize);
         assert!(!text.is_empty());
         if DEBUG_LEVEL >= 1 {
-            println!("Building Suffix Array");
+            println!("Building SaIs Suffix Array");
         }
         let byte_text = ByteText { text };
+        let mut sa: Vec<TextSize> = vec![0; text.len()];
         let mut sa_builder = RecursiveBuilder::new(&byte_text, 256);
-        let sa = sa_builder.build();
+        sa_builder.build(&mut sa);
 
         if DEBUG_LEVEL >= 2 {
             println!("Done");

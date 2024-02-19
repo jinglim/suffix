@@ -24,6 +24,8 @@ mod tests {
             "aaaaaaaa",
             "aaaaaaab",
             "baaaaaaa",
+            "abaaaaaa",
+            "abababab",
             "abcbabcba",
             "cabbage abc food abc vegetables",
             "ktrthleluzsxleo",
@@ -33,6 +35,12 @@ mod tests {
         ];
         for test_str in test_strings {
             let test_bytes = test_str.as_bytes();
+
+            println!(
+                "Test string: {}",
+                String::from_utf8_lossy(&test_bytes).to_string()
+            );
+
             let suffix_array = sa_builder.build(test_bytes);
 
             let sa_naive = testing::naive_suffix_array(test_bytes);
@@ -53,8 +61,9 @@ mod tests {
 
         const TEXT_LENGTH: usize = 500;
         let mut test_bytes: Vec<u8> = vec![0; TEXT_LENGTH];
-        let mut rand = 1;
-        for _ in 0..1000 {
+        let mut rand;
+        for n in 0..1000 {
+            rand = n;
             // Some primitive random number generator.
             for j in 0..TEXT_LENGTH {
                 if j >= 1 && next_random(&mut rand) & 1 == 0 {
