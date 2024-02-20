@@ -6,7 +6,7 @@ use super::suffix_array::{SuffixArray, SuffixArrayBuilder, TextSize};
 
 // If enabled (> 0), perform more validations and output more debug info.
 #[allow(dead_code)]
-const DEBUG_LEVEL: usize = 0;
+const DEBUG_LEVEL: usize = 1;
 
 // Each suffix string is either a LType or SType.
 #[derive(Copy, Clone, PartialEq)]
@@ -16,6 +16,9 @@ enum LSType {
 
     // Suffix at (pos) is SType if it is smaller than suffix starting at (pos + 1).
     SType,
+
+    // An invalid type.
+    NAType,
 }
 use LSType::*;
 
@@ -186,7 +189,9 @@ struct Bucket {
 // Contains various data structures computed from the original text.
 struct SuffixData {
     // Contains LSType of each char in the text.
-    ls_type: Vec<LSType>,
+    // This is of length (text.len + 2) because it's padded at 0-th index with NAType,
+    // and SType at (len + 1)-th index.
+    ls_type_buffer: Vec<LSType>,
 
     // The buckets in ascending order.
     // e.g. bucket[0] = bucket for char 0.
@@ -195,6 +200,19 @@ struct SuffixData {
     // Indexes of buckets that are not empty.
     // This allows quicker iteration through the buckets.
     bucket_indexes: Vec<usize>,
+}
+
+impl<'a> SuffixData {
+    // ls_type[pos] = LSType at the position.
+    fn ls_type(&'a self) -> &'a [LSType] {
+        &self.ls_type_buffer[1..]
+    }
+
+    // ls_type[pos] = LSType at (pos - 1)-th position.
+    // ls_type[0] = NAType.
+    fn prev_ls_type(&'a self) -> &'a [LSType] {
+        &self.ls_type_buffer
+    }
 }
 
 // Builds a SuffixArray recursively.
@@ -285,7 +303,7 @@ impl<'a> RecursiveBuilder<'a> {
 
                 // Now, we have sa[0..num_lms] = sorted offsets that are relative to the reduced
                 // text. Next, convert these pos to the pos relative to the original text.
-                let ls_type = &suffix_data.ls_type;
+                let ls_type = suffix_data.ls_type();
                 for i in 0..num_lms {
                     // In the reduce step, we kept a mapping from the reduced text pos to the
                     // original text pos:
@@ -315,12 +333,13 @@ impl<'a> RecursiveBuilder<'a> {
         println!("{}", title);
         println!("  text: {}", self.text);
         print!("  type: ");
-        for ls in suffix_data.ls_type.iter() {
+        for ls in suffix_data.ls_type().iter() {
             print!(
                 "{}",
                 match ls {
                     LType => 'L',
                     SType => 'S',
+                    NAType => 'N',
                 }
             );
         }
@@ -335,10 +354,16 @@ impl<'a> RecursiveBuilder<'a> {
         let len = text.len();
 
         // Classify all positions into LType or SType.
-        let mut ls_type = vec![LType; text.len() as usize + 1];
+        // Note that ls_type[pos] = ls_type_buffer[pos + 1].
+        let mut ls_type_buffer = vec![LType; text.len() as usize + 2];
+
+        // The buffer is padded at 0-th position with NAType.
+        ls_type_buffer[0] = NAType;
 
         // Type at [len - 1] is always LType, and type at [len] is always SType.
-        ls_type[len as usize] = SType;
+        ls_type_buffer[(len + 1) as usize] = SType;
+
+        let ls_type = &mut ls_type_buffer[1..];
 
         // Count number of each item in the text for bucketing.
         let mut char_count: Vec<TextSize> = vec![0; self.alphabet_size as usize];
@@ -394,7 +419,7 @@ impl<'a> RecursiveBuilder<'a> {
         assert!(total_count == self.text.len());
 
         SuffixData {
-            ls_type,
+            ls_type_buffer,
             buckets,
             bucket_indexes,
         }
@@ -439,7 +464,8 @@ impl<'a> RecursiveBuilder<'a> {
             sa[(buckets[ch as usize].end - tail_pos) as usize] = pos;
         }
 
-        let ls_type = &suffix_data.ls_type;
+        let ls_type = suffix_data.ls_type();
+        let prev_ls_type = suffix_data.prev_ls_type();
         let buckets = &suffix_data.buckets;
 
         // These provide information about the next available position at the
@@ -478,13 +504,11 @@ impl<'a> RecursiveBuilder<'a> {
             // Assign the LTypes at the head of the bucket.
             let mut i = 0;
             while i < bucket_heads[b] {
-                let pos = sa[(bucket.start + i) as usize];
-                if pos > 0 {
-                    let prev_pos = pos - 1;
-                    if ls_type[prev_pos as usize] == LType {
-                        assign_ltype(self.text, prev_pos, buckets, &mut bucket_heads, sa);
-                    }
+                let pos = sa[(bucket.start + i) as usize];               
+                if prev_ls_type[pos as usize] == LType {
+                    assign_ltype(self.text, pos - 1, buckets, &mut bucket_heads, sa);
                 }
+        
                 i += 1;
             }
 
@@ -507,24 +531,21 @@ impl<'a> RecursiveBuilder<'a> {
             let mut i = 0;
             while i < bucket_tails[b] {
                 let pos = sa[(bucket.end - 1 - i) as usize];
-                if pos > 0 {
-                    let prev_pos = pos - 1;
-                    if ls_type[prev_pos as usize] == SType {
-                        assign_stype(self.text, prev_pos, buckets, &mut bucket_tails, sa);
-                    }
+                if prev_ls_type[pos as usize] == SType {
+                    assign_stype(self.text, pos - 1, buckets, &mut bucket_tails, sa);
                 }
+
                 i += 1;
             }
 
             // Traverse the L positions (at the head of the bucket).
             for i in (bucket.start..bucket.start + bucket_heads[b]).rev() {
                 let pos = sa[i as usize];
-                if pos > 0 {
-                    let prev_pos = pos - 1;
-                    if ls_type[prev_pos as usize] == SType {
-                        assign_stype(self.text, prev_pos, buckets, &mut bucket_tails, sa);
-                    }
+
+                if prev_ls_type[pos as usize] == SType {
+                    assign_stype(self.text, pos - 1, buckets, &mut bucket_tails, sa);
                 }
+
             }
         }
 
@@ -540,7 +561,7 @@ impl<'a> RecursiveBuilder<'a> {
         sa: &mut [TextSize],
         bucket_tails: &[TextSize],
     ) -> ReducedText {
-        let ls_type = &suffix_data.ls_type;
+        let ls_type = suffix_data.ls_type();
         let buckets = &suffix_data.buckets;
 
         // Number of LMS suffixes.
@@ -564,7 +585,7 @@ impl<'a> RecursiveBuilder<'a> {
         assert!(num_lms <= text_len / 2);
 
         if num_lms < 2 {
-            return ReducedText::Sorted { num_lms: num_lms };
+            return ReducedText::Sorted { num_lms };
         }
 
         // Clear out the text_len/2 slots from sa[num_lms..].
@@ -601,7 +622,7 @@ impl<'a> RecursiveBuilder<'a> {
         assert!(name_counter <= u32::MAX as TextSize);
 
         if name_counter == num_lms {
-            ReducedText::Sorted { num_lms: num_lms }
+            ReducedText::Sorted { num_lms }
         } else {
             // Scan LMS positions and construct the new text by mapping each LMS substring to the
             // its new alphabet.
@@ -626,7 +647,7 @@ impl<'a> RecursiveBuilder<'a> {
             }
 
             ReducedText::Reduced {
-                reduced_text: reduced_text,
+                reduced_text,
                 alphabet_size: name_counter,
             }
         }
