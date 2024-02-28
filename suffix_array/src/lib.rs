@@ -6,3 +6,4 @@ mod testing;
 pub use naive::NaiveBuilder;
 pub use sa_is::SaIsBuilder;
 pub use suffix_array::SuffixArrayBuilder;
+pub use suffix_array::validate_suffix_array;

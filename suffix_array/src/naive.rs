@@ -16,6 +16,10 @@ impl SuffixArray for NaiveSuffixArray {
     fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = TextSize> + 'a> {
         Box::new(self.sa.iter().copied())
     }
+
+    fn array(&self) -> &[TextSize] {
+        &self.sa
+    }
 }
 
 impl NaiveBuilder {

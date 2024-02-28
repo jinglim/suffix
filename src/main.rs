@@ -1,18 +1,18 @@
-use suffix_array::SaIsBuilder;
-use suffix_array::NaiveBuilder;
-use suffix_array::SuffixArrayBuilder;
+use suffix_array::{SaIsBuilder, NaiveBuilder, SuffixArrayBuilder, validate_suffix_array};
 
 // Whether to print verbose information for debugging.
 #[allow(dead_code)]
 const DEBUG_ENABLED: bool = false;
 
-fn compute_suffix_array(sa_builder: Box<dyn SuffixArrayBuilder>, filename: &str) {
+// Whether to validate the suffix array after it's been computed.
+const VALIDATION_ENABLED: bool = false;
+
+fn compute_suffix_array(sa_builders: &[Box<dyn SuffixArrayBuilder>], filename: &str) {
     println!("Reading file: {}", filename);
     let file_contents = std::fs::read_to_string(filename).unwrap();
     let text_bytes = file_contents.as_bytes();
 
-    const REPETITIONS: usize = 1;
-    for _ in 0.. REPETITIONS {
+    for sa_builder in sa_builders {
         println!("Building suffix array");
         let suffix_array = sa_builder.build(text_bytes);
 
@@ -31,14 +31,21 @@ fn compute_suffix_array(sa_builder: Box<dyn SuffixArrayBuilder>, filename: &str)
                 );
             }
         }
+
+        if VALIDATION_ENABLED {
+            validate_suffix_array(&text_bytes, suffix_array.array());
+        }
     }
     println!("Done");
 }
 
 fn main() -> std::io::Result<()> {
-    let builder = Box::new(SaIsBuilder::new());
-    //let builder = Box::new(NaiveBuilder::new());
+    let sa_is_builder = Box::new(SaIsBuilder::new());
+    let naive_builder = Box::new(NaiveBuilder::new());
 
-    compute_suffix_array(builder, "/tmp/test.txt");
+    //let builders : [Box<dyn SuffixArrayBuilder>; 2] = [sa_is_builder, naive_builder];
+    let builders : [Box<dyn SuffixArrayBuilder>; 1] = [sa_is_builder];
+    
+    compute_suffix_array(&builders, "/tmp/test.txt");
     Ok(())
 }

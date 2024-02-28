@@ -24,17 +24,23 @@ use LSType::*;
 
 // Represents a sequence of text characters.
 trait Text: std::fmt::Display {
-    // Length of the text.
+    // Length of the text.f
     fn len(&self) -> TextSize;
 
     // Returns a character as u32.
     fn char_at(&self, index: TextSize) -> u32;
 
+    // Returns a substring.
+    fn substring(&self, start: TextSize, end: TextSize) -> String;
+
     // Returns a suffix string starting at given index. Used for debugging.
-    fn suffix_at(&self, index: TextSize) -> String;
+    fn suffix_at(&self, index: TextSize) -> String {
+        self.substring(index, self.len())
+    }
 
     // Compares two LMS substrings in this text.
-    // The two substrings should have the same chars, and same LSType.
+    // A LMS substring starts from a LMS position and ends in the next LMS position (inclusive).
+    // Two LMS substrings are equal if they have the same length, characters, and same LSTypes.
     fn lms_strings_equal(&self, mut a: TextSize, mut b: TextSize, ls_type: &[LSType]) -> bool {
         // LMS strings start with STypes.
         debug_assert!(ls_type[a as usize] == SType && ls_type[b as usize] == SType);
@@ -62,12 +68,21 @@ trait Text: std::fmt::Display {
             b += 1;
             let a_type = ls_type[a as usize];
             if a_type == SType {
-                return ls_type[b as usize] == SType;
+                break;
             }
             if self.char_at(a) != self.char_at(b) {
                 return false;
             }
         }
+
+        if ls_type[b as usize] != SType {
+            return false;
+        }
+        let len = self.len();
+        if a == len || b == len {
+            return false;
+        }
+        self.char_at(a) == self.char_at(b)
     }
 }
 
@@ -85,8 +100,8 @@ impl<'a> Text for ByteText<'a> {
         self.text[index as usize] as u32
     }
 
-    fn suffix_at(&self, index: TextSize) -> String {
-        String::from_utf8_lossy(&self.text[index as usize..]).to_string()
+    fn substring(&self, start: TextSize, end: TextSize) -> String {
+        String::from_utf8_lossy(&self.text[start as usize..end as usize]).to_string()
     }
 }
 
@@ -111,13 +126,14 @@ impl<'a> Text for U32Text<'a> {
         self.text[index as usize]
     }
 
-    fn suffix_at(&self, index: TextSize) -> String {
+    fn substring(&self, start: TextSize, end: TextSize) -> String {
         let mut suffix = String::new();
-        for i in index as usize..self.text.len() {
-            suffix += &format!("[{}] ", self.text[i]);
+        for i in start..end  {
+            suffix += &format!("[{}] ", self.text[i as usize]);
         }
         suffix
     }
+
 }
 
 impl<'a> std::fmt::Display for U32Text<'a> {
@@ -130,6 +146,7 @@ impl<'a> std::fmt::Display for U32Text<'a> {
 }
 
 // Iterates through LMS positions in a given Text.
+// A position P is LMS if type(P) = SType and type(P - 1) = LType.
 struct LmsIterator<'a> {
     // Array of LSTypes.
     ls_type: &'a [LSType],
@@ -426,7 +443,7 @@ impl<'a> RecursiveBuilder<'a> {
     }
 
     // Induced sorting.
-    // stype_iter is an initial set of sorted SType positions to start the
+    // InduceSortLmsStrings refers to an initial set of sorted SType positions to start the
     // induced sort.
     fn induced_sort(
         &self,
@@ -481,8 +498,8 @@ impl<'a> RecursiveBuilder<'a> {
                 }
             }
             InduceSortLmsStrings::Sorted { num_lms } => {
-                for pos in (0..num_lms).rev() {
-                    assign_stype(self.text, sa[pos as usize], buckets, &mut bucket_tails, sa);
+                for i in (0..num_lms).rev() {
+                    assign_stype(self.text, sa[i as usize], buckets, &mut bucket_tails, sa);
                 }
             }
         }
@@ -534,18 +551,15 @@ impl<'a> RecursiveBuilder<'a> {
                 if prev_ls_type[pos as usize] == SType {
                     assign_stype(self.text, pos - 1, buckets, &mut bucket_tails, sa);
                 }
-
                 i += 1;
             }
 
             // Traverse the L positions (at the head of the bucket).
             for i in (bucket.start..bucket.start + bucket_heads[b]).rev() {
                 let pos = sa[i as usize];
-
                 if prev_ls_type[pos as usize] == SType {
                     assign_stype(self.text, pos - 1, buckets, &mut bucket_tails, sa);
                 }
-
             }
         }
 
@@ -624,8 +638,7 @@ impl<'a> RecursiveBuilder<'a> {
         if name_counter == num_lms {
             ReducedText::Sorted { num_lms }
         } else {
-            // Scan LMS positions and construct the new text by mapping each LMS substring to the
-            // its new alphabet.
+            // Construct the new text by mapping each LMS substring to its new alphabet.
             let mut reduced_text: Vec<u32> = Vec::with_capacity(num_lms as usize);
             let mut i = num_lms;
             let mut j = 0;
@@ -654,7 +667,7 @@ impl<'a> RecursiveBuilder<'a> {
     }
 }
 
-// An implementation of SA-IS algorithm.
+// An implementation of the SA-IS suffix array construction algorithm.
 pub struct SaIsBuilder {}
 
 impl SaIsBuilder {
@@ -670,6 +683,10 @@ struct SaIsSuffixArray {
 impl SuffixArray for SaIsSuffixArray {
     fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = TextSize> + 'a> {
         Box::new(self.sa.iter().copied())
+    }
+
+    fn array(&self) -> &[TextSize] {
+       &self.sa
     }
 }
 
