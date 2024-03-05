@@ -24,7 +24,7 @@ use LSType::*;
 
 // Represents a sequence of text characters.
 trait Text: std::fmt::Display {
-    // Length of the text.f
+    // Length of the text.
     fn len(&self) -> TextSize;
 
     // Returns a character as u32.
@@ -525,7 +525,6 @@ impl<'a> RecursiveBuilder<'a> {
                 if prev_ls_type[pos as usize] == LType {
                     assign_ltype(self.text, pos - 1, buckets, &mut bucket_heads, sa);
                 }
-        
                 i += 1;
             }
 
@@ -575,7 +574,7 @@ impl<'a> RecursiveBuilder<'a> {
         sa: &mut [TextSize],
         bucket_tails: &[TextSize],
     ) -> ReducedText {
-        let ls_type = suffix_data.ls_type();
+        let prev_ls_type = suffix_data.prev_ls_type();
         let buckets = &suffix_data.buckets;
 
         // Number of LMS suffixes.
@@ -589,7 +588,7 @@ impl<'a> RecursiveBuilder<'a> {
             for i in bucket.end - bucket_tails[b]..bucket.end {
                 // Check if pos is a LMS.
                 let pos = sa[i as usize];
-                if pos > 0 && ls_type[(pos - 1) as usize] == LType {
+                if prev_ls_type[pos as usize] == LType {
                     sa[num_lms as usize] = pos;
                     num_lms += 1;
                 }
@@ -614,6 +613,7 @@ impl<'a> RecursiveBuilder<'a> {
         sa[(num_lms + last_lms_pos / 2) as usize] = 0;
         let mut name_counter: TextSize = 0;
 
+        let ls_type = suffix_data.ls_type();
         for i in 1..num_lms {
             let pos = sa[i as usize];
 
