@@ -442,6 +442,38 @@ impl<'a> RecursiveBuilder<'a> {
         }
     }
 
+    // Assign a rank for prev_pos at the next available head pos of the
+    // bucket. LTypes are always placed at the head part of the bucket.
+    #[inline]
+    fn assign_ltype(
+        text: &dyn Text,
+        pos: TextSize,
+        buckets: &[Bucket],
+        bucket_heads: &mut [TextSize],
+        sa: &mut [TextSize],
+    ) {
+        let ch = text.char_at(pos);
+        let head_pos = bucket_heads[ch as usize];
+        bucket_heads[ch as usize] += 1;
+        sa[(buckets[ch as usize].start + head_pos) as usize] = pos;
+    }
+
+    // Assign a rank for prev_pos at the next tail pos of the bucket.
+    // SType are always placed at the tail part of the bucket.
+    #[inline]
+    fn assign_stype(
+        text: &dyn Text,
+        pos: TextSize,
+        buckets: &[Bucket],
+        bucket_tails: &mut [TextSize],
+        sa: &mut [TextSize],
+    ) {
+        let ch = text.char_at(pos);
+        bucket_tails[ch as usize] += 1;
+        let tail_pos = bucket_tails[ch as usize];
+        sa[(buckets[ch as usize].end - tail_pos) as usize] = pos;
+    }
+
     // Induced sorting.
     // InduceSortLmsStrings refers to an initial set of sorted SType positions to start the
     // induced sort.
@@ -451,36 +483,6 @@ impl<'a> RecursiveBuilder<'a> {
         sa: &mut [TextSize],
         lms_strings: InduceSortLmsStrings,
     ) -> Vec<TextSize> {
-        // Assign a rank for prev_pos at the next available head pos of the
-        // bucket. LTypes are always placed at the head part of the bucket.
-        fn assign_ltype(
-            text: &dyn Text,
-            pos: TextSize,
-            buckets: &[Bucket],
-            bucket_heads: &mut [TextSize],
-            sa: &mut [TextSize],
-        ) {
-            let ch = text.char_at(pos);
-            let head_pos = bucket_heads[ch as usize];
-            bucket_heads[ch as usize] += 1;
-            sa[(buckets[ch as usize].start + head_pos) as usize] = pos;
-        }
-
-        // Assign a rank for prev_pos at the next tail pos of the bucket.
-        // SType are always placed at the tail part of the bucket.
-        fn assign_stype(
-            text: &dyn Text,
-            pos: TextSize,
-            buckets: &[Bucket],
-            bucket_tails: &mut [TextSize],
-            sa: &mut [TextSize],
-        ) {
-            let ch = text.char_at(pos);
-            bucket_tails[ch as usize] += 1;
-            let tail_pos = bucket_tails[ch as usize];
-            sa[(buckets[ch as usize].end - tail_pos) as usize] = pos;
-        }
-
         let ls_type = suffix_data.ls_type();
         let prev_ls_type = suffix_data.prev_ls_type();
         let buckets = &suffix_data.buckets;
@@ -494,18 +496,18 @@ impl<'a> RecursiveBuilder<'a> {
         match lms_strings {
             InduceSortLmsStrings::LmsIterator => {
                 for pos in LmsIterator::new(ls_type) {
-                    assign_stype(self.text, pos, buckets, &mut bucket_tails, sa);
+                    Self::assign_stype(self.text, pos, buckets, &mut bucket_tails, sa);
                 }
             }
             InduceSortLmsStrings::Sorted { num_lms } => {
                 for i in (0..num_lms).rev() {
-                    assign_stype(self.text, sa[i as usize], buckets, &mut bucket_tails, sa);
+                    Self::assign_stype(self.text, sa[i as usize], buckets, &mut bucket_tails, sa);
                 }
             }
         }
 
         // Assign the last char, which is always a LType that is smallest in its bucket.
-        assign_ltype(
+        Self::assign_ltype(
             self.text,
             self.text.len() - 1,
             buckets,
@@ -523,7 +525,7 @@ impl<'a> RecursiveBuilder<'a> {
             while i < bucket_heads[b] {
                 let pos = sa[(bucket.start + i) as usize];               
                 if prev_ls_type[pos as usize] == LType {
-                    assign_ltype(self.text, pos - 1, buckets, &mut bucket_heads, sa);
+                    Self::assign_ltype(self.text, pos - 1, buckets, &mut bucket_heads, sa);
                 }
                 i += 1;
             }
@@ -532,7 +534,7 @@ impl<'a> RecursiveBuilder<'a> {
             for i in bucket.end - bucket_tails[b]..bucket.end {
                 let pos = sa[i as usize];
                 let prev_pos = pos - 1;
-                assign_ltype(self.text, prev_pos, buckets, &mut bucket_heads, sa);
+                Self::assign_ltype(self.text, prev_pos, buckets, &mut bucket_heads, sa);
             }
         }
 
@@ -548,7 +550,7 @@ impl<'a> RecursiveBuilder<'a> {
             while i < bucket_tails[b] {
                 let pos = sa[(bucket.end - 1 - i) as usize];
                 if prev_ls_type[pos as usize] == SType {
-                    assign_stype(self.text, pos - 1, buckets, &mut bucket_tails, sa);
+                    Self::assign_stype(self.text, pos - 1, buckets, &mut bucket_tails, sa);
                 }
                 i += 1;
             }
@@ -557,7 +559,7 @@ impl<'a> RecursiveBuilder<'a> {
             for i in (bucket.start..bucket.start + bucket_heads[b]).rev() {
                 let pos = sa[i as usize];
                 if prev_ls_type[pos as usize] == SType {
-                    assign_stype(self.text, pos - 1, buckets, &mut bucket_tails, sa);
+                    Self::assign_stype(self.text, pos - 1, buckets, &mut bucket_tails, sa);
                 }
             }
         }
